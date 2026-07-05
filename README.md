@@ -1,0 +1,1 @@
+TeachingLearning is an experiment in learning through communication. It will serve for me as a learning journal where new ideas and skills can be recorded, but hopefully serve doubly as a set of learning resources for those interested. The main premise of the project is the belief that teaching a certain idea, or creating it yourself, is the best way to truly understand it.
