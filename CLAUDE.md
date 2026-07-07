@@ -40,14 +40,15 @@ Short glossary so nothing here is mysterious:
   do math on meaning.
 - **Persistence** — saving the graph to disk so it survives closing the app.
 - **Local model** — an AI model that runs on the user's own computer, no
-  internet or cloud account needed.
+  internet or cloud account needed. Used here as the fallback when the
+  network isn't available.
 
 ---
 
 ## 3. How it works (the pipeline)
 
 1. **User adds a concept** → stored as a node.
-2. **User describes a relationship in plain English** → a local AI model reads
+2. **User describes a relationship in plain English** → an AI model reads
    the sentence and turns it into a tidy record: `(source, target, predicate,
    directed?)`. The predicate keeps the user's actual wording.
 3. **Every node and predicate gets an embedding** (its meaning as numbers),
@@ -78,7 +79,9 @@ the reasoning decisions. Keep it that way.
 
 ## 4. Tech stack
 
-Everything runs locally on the user's machine. No servers, no cloud.
+A desktop app. The generative model is a cloud API; everything else (graph,
+embeddings, math, UI) runs on the user's machine, and a local model serves as
+the fallback when the network isn't available.
 
 **Language:** Python.
 
@@ -89,10 +92,10 @@ Everything runs locally on the user's machine. No servers, no cloud.
 - **sentence-transformers** — makes the embeddings. Start with the
   `all-MiniLM-L6-v2` model (small, fast, good enough). Can swap for a stronger
   model later; it must be an *embedding* model, not a chat model.
-- **Ollama** — runs the generative AI model locally (e.g. Llama or Qwen). Used
-  for the two "translation" jobs in §3. Optionally swappable for the cloud
-  **DeepSeek** API (see §8 — an explicit, opt-in exception to "everything
-  local"); both are spoken to through the same OpenAI-compatible endpoint.
+- **DeepSeek API** — runs the generative AI model (V4 Pro) used for the two
+  "translation" jobs in §3. **Ollama** is the local fallback when the network
+  (or an API key) isn't available; both are spoken to through the same
+  OpenAI-compatible endpoint, so swapping is configuration, not code (§8).
 - **Instructor + Pydantic** — forces the AI model's answer into the exact record
   shape we need. Pydantic defines the shape; Instructor makes the model obey it
   and retries if it doesn't. (See §6 for the shape.)
@@ -151,12 +154,12 @@ fast-search libraries (FAISS etc.). Revisit only past ~10,000 items.
   label.
 - **Geometry decides, the model verbalises** (§3). Don't move reasoning into the
   generative model.
-- **Everything local.** No feature should require a cloud account or internet
-  (model downloads on first run are fine). One deliberate, owner-approved
-  exception: the generative model *may* be pointed at the cloud DeepSeek API,
-  but only as an opt-in (`LLM_PROVIDER=deepseek`) — the default stays local,
-  no other feature may grow a cloud dependency, and the app must keep working
-  fully without it (§8).
+- **A local fallback must keep working.** The generative model lives in the
+  cloud (DeepSeek), but the app must stay usable without a network: Ollama
+  covers the translation jobs locally, and if no model is available at all
+  the app degrades gracefully (§8). No *other* feature may require the
+  network — the graph, embeddings, math, and UI all stay on the user's
+  machine.
 
 ---
 
@@ -208,8 +211,8 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
     graph.py          NetworkX graph in memory + the Node/Edge models (§6)
     storage.py        save/load JSON + snapshot history (roll back to old versions)
     embeddings.py     make + cache embeddings (sentence-transformers)
-    llm.py            model calls (Ollama or DeepSeek), wrapped with
-                      Instructor/Pydantic; writes the cost log
+    llm.py            model calls (DeepSeek, or the Ollama fallback), wrapped
+                      with Instructor/Pydantic; writes the cost log
     predict.py        missing-edge scoring (meaning + structure)
     reason.py         path-finding, path comparison, agree/disagree logic
     layout.py         meaning-based 3D positions via UMAP (clustering mode)
@@ -217,7 +220,7 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
     index.html        the page the graph is drawn into (side panel + 3D canvas)
     main.js           3D drawing (3d-force-graph) + user interaction
     bridge.py         pywebview: connects Python (/app) to the page
-    /vendor           committed JS bundle (3d-force-graph + three) so the app
+    /vendor           committed JS bundle (3d-force-graph + three) so the UI
                       needs no internet at runtime
   /tests              pytest unit tests for the /app core (embeddings stubbed)
   /snapshots          saved graph versions (created at runtime, not committed)
@@ -241,25 +244,30 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
 - **Standalone project** for now. If it later plugs into the learning-journal
   website, this layout stays valid and we'd add an export path.
 
-- **Local model (default):** Ollama runs **qwen3:4b** for the plain-English
-  translation jobs (small enough for an 8 GB GPU, good at structured output).
-  Overridable without code changes via the `OLLAMA_MODEL` env var;
-  `OLLAMA_URL` likewise. If the model is unavailable the app degrades
-  gracefully: relationship sentences are stored verbatim as symmetric edges
-  and AI-assisted features switch off.
-- **Cloud model (opt-in, July 2026):** setting `LLM_PROVIDER=deepseek` plus
-  `DEEPSEEK_API_KEY` routes the same translation jobs to **DeepSeek V4 Pro**
-  ($0.435/M input, $0.87/M output — roughly $0.30 per thousand app calls),
-  chosen for stronger, more *descriptive* predicates when suggesting edges.
-  This is a paid, prepaid-credit API and the one sanctioned exception to
-  "everything local" (§5). Every call (retries included) is appended to
-  `llm_costs.log` with its token counts, dollar cost, and running total;
-  `llm.accrued_cost()` exposes the total programmatically. Model overridable
-  via `DEEPSEEK_MODEL`; the same graceful degradation applies (missing key,
-  offline, or exhausted balance ⇒ AI features switch off).
+- **Generative model (July 2026):** **DeepSeek V4 Pro** via the cloud API is
+  the primary model for the plain-English translation jobs ($0.435/M input,
+  $0.87/M output — roughly $0.30 per thousand app calls), chosen for speed
+  and for stronger, more *descriptive* predicates when suggesting edges.
+  Selected with `LLM_PROVIDER=deepseek` plus `DEEPSEEK_API_KEY`; model
+  overridable via `DEEPSEEK_MODEL`. It is a paid, prepaid-credit API: every
+  call (retries included) is appended to `llm_costs.log` with its token
+  counts, dollar cost, and running total, and `llm.accrued_cost()` exposes
+  the total programmatically.
+- **Local fallback:** Ollama running **qwen3:4b** (small enough for an 8 GB
+  GPU, good at structured output; `OLLAMA_MODEL` / `OLLAMA_URL` to override)
+  covers the same jobs when there's no network, no API key, or no credit.
+  If no model is available at all the app degrades gracefully: relationship
+  sentences are stored verbatim as symmetric edges and AI-assisted features
+  switch off.
 
 **Still open:**
-- *(nothing at the moment)*
+- *Automatic fallback isn't wired yet.* The code picks its provider once at
+  startup from `LLM_PROVIDER` (defaulting to Ollama) and does not switch to
+  the local model on a network failure — today the "fallback" is manual (set
+  the env var) or the graceful no-model degradation. Bringing the code in
+  line with the design above means: default to DeepSeek when a key is
+  present, and fall back to Ollama automatically when the API is
+  unreachable.
 
 ---
 
