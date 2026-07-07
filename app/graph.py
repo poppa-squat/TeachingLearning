@@ -148,6 +148,14 @@ class KnowledgeGraph:
         }
         return [n for n in self._g.nodes if n in named]
 
+    def related_by_membership(self, a: str, b: str) -> bool:
+        """True if membership already links a and b in either direction,
+        directly or through intermediate containers."""
+        return (
+            self._ancestor_chain(a, b) is not None
+            or self._ancestor_chain(b, a) is not None
+        )
+
     def _ancestor_chain(self, start: str, target: str) -> list[str] | None:
         """A membership chain from `start` up through its parents to `target`,
         or None if `target` is not an ancestor of `start`."""
