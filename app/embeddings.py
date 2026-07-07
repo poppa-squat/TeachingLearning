@@ -1,9 +1,13 @@
 """Embeddings: turn concept names and predicates into meaning-vectors.
 
-Uses sentence-transformers (all-MiniLM-L6-v2, 384 dims). Each distinct text is
-embedded once and cached — in memory for the session, and on disk (.npz) so
-restarting the app doesn't recompute anything. All vectors are L2-normalised
-on creation, so cosine similarity is a plain dot product.
+Uses sentence-transformers (Qwen3-Embedding-0.6B, 1024 dims). Each distinct
+text is embedded once and cached — in memory for the session, and on disk
+(.npz) so restarting the app doesn't recompute anything. All vectors are
+L2-normalised on creation, so cosine similarity is a plain dot product.
+
+The on-disk cache records which model produced it. Vectors from one model are
+meaningless when compared against another's, so if MODEL_NAME changes the old
+cache is discarded and everything is recomputed (instant at this graph size).
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 CACHE_FILE = Path("embeddings_cache.npz")
 
 
@@ -24,8 +28,7 @@ class EmbeddingStore:
         self._model = None  # loaded lazily; costs a few seconds + download on first run
         self._model_lock = threading.Lock()
         if self._cache_file and self._cache_file.exists():
-            with np.load(self._cache_file) as data:
-                self._cache = {key: data[key] for key in data.files}
+            self._cache = self._load_cache(self._cache_file)
 
     def embed(self, texts: list[str]) -> np.ndarray:
         """Vectors for `texts` (rows in the same order). Cached texts are free."""
@@ -66,4 +69,35 @@ class EmbeddingStore:
         if self._cache_file is None:
             return
         self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(self._cache_file, **self._cache)
+        if self._cache:
+            keys = np.array(list(self._cache), dtype=str)
+            vectors = np.stack(list(self._cache.values()))
+        else:
+            keys = np.array([], dtype=str)
+            vectors = np.empty((0, 0), dtype=np.float32)
+        # Store the producing model alongside the vectors so a later run with a
+        # different MODEL_NAME can tell the cache is stale rather than mixing
+        # incompatible vector spaces. Texts are kept as a separate keys array
+        # (not archive names) so any concept wording is safe, including one that
+        # happens to collide with a metadata field name.
+        np.savez(
+            self._cache_file,
+            model=np.array(MODEL_NAME),
+            keys=keys,
+            vectors=vectors,
+        )
+
+    @staticmethod
+    def _load_cache(cache_file: Path) -> dict[str, np.ndarray]:
+        """Load a cache, but only if it was produced by the current model.
+        A missing/foreign/legacy-format cache yields an empty dict, so its
+        vectors get recomputed under MODEL_NAME instead of being trusted."""
+        with np.load(cache_file, allow_pickle=False) as data:
+            if "model" not in data.files or str(data["model"]) != MODEL_NAME:
+                return {}
+            keys = data["keys"]
+            vectors = data["vectors"]
+        return {
+            str(text): np.asarray(vec, dtype=np.float32)
+            for text, vec in zip(keys, vectors)
+        }

@@ -1,4 +1,4 @@
-"""Meaning-based 3D layout: UMAP squashes each concept's 384-number embedding
+"""Meaning-based 3D layout: UMAP squashes each concept's long embedding vector
 down to an (x, y, z) position, keeping similar concepts near each other.
 
 These positions are derived, never saved — they are recomputed whenever the

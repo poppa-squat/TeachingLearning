@@ -270,3 +270,62 @@ def test_layout_with_enriched_texts_stays_keyed_by_name():
         ["a", "b", "c"], StubStore(), texts=["a: one", "b: two", "c: three"]
     )
     assert set(positions) == {"a", "b", "c"}
+
+
+# ---- embeddings cache --------------------------------------------------------
+
+class _FakeModel:
+    """Deterministic stand-in for the sentence-transformers model, so the cache
+    can be exercised without downloading or loading a real embedding model."""
+
+    def __init__(self, dim: int = 4):
+        self.dim = dim
+
+    def encode(self, texts, normalize_embeddings=True, show_progress_bar=False):
+        rows = []
+        for t in texts:
+            rng = np.random.default_rng(abs(hash(t)) % 2**32)
+            v = rng.normal(size=self.dim)
+            rows.append((v / np.linalg.norm(v)).astype(np.float32))
+        return np.stack(rows)
+
+
+def _store_with_fake_model(cache_file):
+    from app.embeddings import EmbeddingStore
+
+    store = EmbeddingStore(cache_file=cache_file)
+    store._model = _FakeModel()  # pre-set so no real model is ever loaded
+    return store
+
+
+def test_cache_survives_reload_without_reloading_model(tmp_path):
+    cache = tmp_path / "cache.npz"
+    texts = ["matrix: a grid of numbers", "real number", "model"]  # "model" is a
+    #   deliberate collision with the metadata field name.
+    first = _store_with_fake_model(cache).embed(texts)
+
+    reopened = _store_with_fake_model(cache)
+    reopened._model = None  # a genuine cache hit must not need the model at all
+    again = reopened.embed(texts)
+
+    assert np.allclose(first, again)
+    assert reopened._model is None
+
+
+def test_cache_discarded_when_model_changes(tmp_path, monkeypatch):
+    import app.embeddings as emb
+
+    cache = tmp_path / "cache.npz"
+    _store_with_fake_model(cache).embed(["vector"])
+
+    monkeypatch.setattr(emb, "MODEL_NAME", "Some/DifferentModel")
+    assert emb.EmbeddingStore(cache_file=cache)._cache == {}
+
+
+def test_legacy_cache_format_is_discarded(tmp_path):
+    from app.embeddings import EmbeddingStore
+
+    cache = tmp_path / "cache.npz"
+    # Old scheme: each text was its own archive key, with no model tag.
+    np.savez(cache, **{"eigenvalue": np.ones(4, dtype=np.float32)})
+    assert EmbeddingStore(cache_file=cache)._cache == {}

@@ -89,9 +89,12 @@ the fallback when the network isn't available.
 - **NetworkX** — holds the graph and does all graph operations (paths,
   shared-neighbour scores, the "relationships-as-nodes" view, importance
   scores). Correct choice specifically because the graph is small.
-- **sentence-transformers** — makes the embeddings. Start with the
-  `all-MiniLM-L6-v2` model (small, fast, good enough). Can swap for a stronger
-  model later; it must be an *embedding* model, not a chat model.
+- **sentence-transformers** — makes the embeddings. Uses `Qwen3-Embedding-0.6B`
+  (1024 dims): still small and CPU-fast at this graph size, but sharper on STEM
+  vocabulary and on relational phrasing than the original `all-MiniLM-L6-v2`
+  starter model. It must be an *embedding* model, not a chat model. The on-disk
+  cache is tagged with the model name, so swapping models discards the stale
+  cache and recomputes rather than mixing incompatible vector spaces.
 - **DeepSeek API** — runs the generative AI model (V4 Pro) used for the two
   "translation" jobs in §3. **Ollama** is the local fallback when the network
   (or an API key) isn't available; both are spoken to through the same
@@ -123,7 +126,7 @@ fast-search libraries (FAISS etc.). Revisit only past ~10,000 items.
   thinking stays in Python. (Note: the earlier 2D option, Cytoscape.js, cannot do
   3D, which is why we use this instead.)
 - **umap-learn** — used only for the "meaning-based" layout mode below. It
-  squashes each node's long embedding (384 numbers) down to a 3D position
+  squashes each node's long embedding (1024 numbers) down to a 3D position
   (x, y, z) while keeping similar concepts close.
 
 **Node layout — a user toggle between two modes:**
