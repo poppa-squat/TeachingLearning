@@ -107,6 +107,7 @@ function initGraph() {
     });
   window.addEventListener('resize', () =>
     graph.width($('graph').clientWidth).height($('graph').clientHeight));
+  window.__graph = graph;  // debug handle, like __mainLoaded/__reportError
 }
 
 function repaint() {
