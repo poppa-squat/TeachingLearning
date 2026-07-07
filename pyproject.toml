@@ -1,0 +1,29 @@
+[project]
+name = "teachinglearning"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "instructor>=1.15.4",
+    "llvmlite>=0.44",
+    "networkx>=3.6.1",
+    "numba>=0.61",
+    "numpy>=2.4.6",
+    "ollama>=0.6.2",
+    "openai>=2.44.0",
+    "pydantic>=2.13.4",
+    "pygobject>=3.56.3",
+    "pywebview>=6.2.1",
+    "sentence-transformers>=5.6.0",
+    "umap-learn>=0.5.12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

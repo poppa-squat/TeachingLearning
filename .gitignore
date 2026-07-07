@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Runtime data (the user's map, its history, and the embedding cache)
+graph.json
+snapshots/
+embeddings_cache.npz
+llm_costs.log
+
+# Note: ui/vendor/ IS committed — the app must work offline.

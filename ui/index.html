@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Knowledge Map</title>
+<script>
+  // Surface page errors both on-screen and in the Python log, so a dead
+  // script never fails silently again.
+  window.__reportError = function (msg) {
+    var el = document.getElementById('llm-text');
+    if (el) el.textContent = 'UI error: ' + msg;
+    function send() {
+      try { window.pywebview.api.log_js_error(String(msg)); } catch (e) {}
+    }
+    if (window.pywebview && window.pywebview.api) send();
+    else window.addEventListener('pywebviewready', send);
+  };
+  window.addEventListener('error', function (e) {
+    window.__reportError((e.message || e.type) +
+      (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    window.__reportError(e.reason);
+  });
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (!window.__mainLoaded) window.__reportError('main.js never executed');
+    }, 3000);
+  });
+</script>
+<style>
+  :root {
+    --bg: #10141c;
+    --panel: #181e2a;
+    --panel-edge: #232c3d;
+    --text: #dbe2ee;
+    --muted: #8b96a8;
+    --accent: #5aa9ff;
+    --accent-2: #ffb454;
+    --good: #6fd08c;
+    --bad: #e0697a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ---- side panel ---- */
+  #panel {
+    width: 330px;
+    min-width: 330px;
+    height: 100%;
+    overflow-y: auto;
+    background: var(--panel);
+    border-right: 1px solid var(--panel-edge);
+    padding: 14px 16px 40px;
+  }
+  #panel h1 { font-size: 16px; margin: 2px 0 2px; }
+  #llm-badge { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  #llm-badge .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                    background: var(--muted); margin-right: 4px; }
+  #llm-badge.on .dot { background: var(--good); }
+  #llm-badge.off .dot { background: var(--bad); }
+
+  section { border-top: 1px solid var(--panel-edge); padding: 12px 0; }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); margin: 0 0 8px; }
+
+  input[type=text], textarea {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--panel-edge); border-radius: 6px;
+    padding: 7px 9px; font: inherit;
+  }
+  textarea { resize: vertical; min-height: 54px; }
+  input:focus, textarea:focus { outline: 1px solid var(--accent); }
+
+  button {
+    background: #223049; color: var(--text); border: 1px solid #2e415f;
+    border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer;
+    margin-top: 8px;
+  }
+  button:hover { background: #2a3c5b; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.small { padding: 2px 8px; font-size: 12px; margin: 2px 4px 2px 0; }
+  button.danger { border-color: #5c3540; color: var(--bad); background: transparent; }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row input { flex: 1; }
+  .row button { margin-top: 0; }
+
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .sel-chip {
+    display: inline-block; background: #223049; border-radius: 12px;
+    padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px;
+  }
+  .card {
+    background: var(--bg); border: 1px solid var(--panel-edge);
+    border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px;
+  }
+  .card .score { color: var(--accent-2); font-size: 12px; }
+  .card .pred { color: var(--accent); }
+  .chain { font-size: 12px; color: var(--muted); margin: 4px 0; word-break: break-word; }
+  .facet { margin: 6px 0; }
+  .spin { color: var(--muted); font-size: 12px; }
+  select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 6px; font: inherit; width: 100%; margin-top: 6px;
+  }
+  .toggle { display: flex; border: 1px solid var(--panel-edge); border-radius: 6px; overflow: hidden; }
+  .toggle button { flex: 1; margin: 0; border: 0; border-radius: 0; background: transparent; }
+  .toggle button.active { background: var(--accent); color: #0b1524; font-weight: 600; }
+  #relate-section textarea { margin-top: 8px; }
+  textarea.desc { margin-top: 8px; min-height: 40px; font-size: 12px; }
+  .card .desc-label { font-weight: 600; margin-bottom: 4px; }
+  .toggle.dir { margin-top: 8px; }
+  .toggle.dir button { font-size: 12px; padding: 4px 6px; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+  #status { position: fixed; left: 346px; bottom: 10px; font-size: 12px;
+            color: var(--muted); pointer-events: none; }
+
+  /* ---- 3D canvas ---- */
+  #graph { flex: 1; height: 100%; }
+</style>
+</head>
+<body>
+  <div id="panel">
+    <h1>Knowledge Map</h1>
+    <div id="llm-badge"><span class="dot"></span><span id="llm-text">checking local model…</span></div>
+
+    <section>
+      <h2>Add a concept</h2>
+      <div class="row">
+        <input id="concept-input" type="text" placeholder="e.g. eigenvalues" autocomplete="off">
+        <button id="add-concept" class="primary">Add</button>
+      </div>
+      <textarea id="concept-desc" class="desc"
+        placeholder="Definition (optional) — e.g. “a rectangular grid of numbers that represents a linear map”"></textarea>
+    </section>
+
+    <section>
+      <h2>Selection</h2>
+      <div id="selection-chips" class="hint">Click a node to select it (up to two).</div>
+      <div id="selection-details"></div>
+      <div id="selection-actions"></div>
+    </section>
+
+    <section id="relate-section" hidden>
+      <h2>Describe the relationship</h2>
+      <div class="toggle">
+        <button id="relate-mode-ai" class="active">Plain English</button>
+        <button id="relate-mode-exact">Exact wording</button>
+      </div>
+      <p class="hint" id="relate-hint"></p>
+      <textarea id="relate-input"
+        placeholder="In plain English — e.g. “the determinant being zero is what makes this an eigenvalue”"></textarea>
+      <div id="relate-direction" class="toggle dir" hidden></div>
+      <button id="relate-add" class="primary">Add relationship</button>
+      <div id="relate-result" class="hint"></div>
+    </section>
+
+    <section id="between-section" hidden>
+      <h2>Between these two</h2>
+      <div id="between-edges"></div>
+      <button id="explain-btn">Explain the connection</button>
+      <div id="explain-out"></div>
+    </section>
+
+    <section>
+      <h2>Suggestions</h2>
+      <button id="suggest-btn">Find likely missing connections</button>
+      <div id="suggest-out"></div>
+    </section>
+
+    <section>
+      <h2>Linchpins</h2>
+      <button id="linchpin-btn">Find linchpin relationships</button>
+      <div id="linchpin-out"></div>
+    </section>
+
+    <section>
+      <h2>Layout</h2>
+      <div class="toggle">
+        <button id="mode-manual" class="active">Manual</button>
+        <button id="mode-meaning">By meaning</button>
+      </div>
+      <p class="hint" id="layout-hint">Drag nodes to arrange them; positions are saved.</p>
+    </section>
+
+    <section>
+      <h2>History</h2>
+      <button id="snap-btn">Save a snapshot</button>
+      <select id="snap-list"></select>
+      <button id="snap-restore" class="danger">Restore selected</button>
+    </section>
+  </div>
+
+  <div id="graph"></div>
+  <div id="status"></div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
