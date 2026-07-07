@@ -123,6 +123,100 @@ def test_old_save_without_descriptions_still_loads():
     assert kg.nodes()[0].description == ""
 
 
+# ---- membership ----------------------------------------------------------------
+
+def linear_algebra_graph() -> KnowledgeGraph:
+    kg = KnowledgeGraph()
+    for n in ["linear algebra", "matrix", "vector", "eigenvalues"]:
+        kg.add_node(n)
+    return kg
+
+
+def test_add_member_and_accessors():
+    kg = linear_algebra_graph()
+    assert kg.add_member("matrix", "linear algebra") is True
+    assert kg.add_member("matrix", "linear algebra") is False  # already a member
+    assert kg.members("linear algebra") == ["matrix"]
+    assert kg.parents("matrix") == ["linear algebra"]
+    assert kg.containers() == ["linear algebra"]
+    assert kg.parents("vector") == []
+
+
+def test_multi_parent_membership():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("vector", "linear algebra")
+    assert set(kg.parents("vector")) == {"matrix", "linear algebra"}
+    assert set(kg.containers()) == {"matrix", "linear algebra"}
+
+
+def test_self_membership_rejected():
+    kg = linear_algebra_graph()
+    with pytest.raises(ValueError):
+        kg.add_member("matrix", "matrix")
+
+
+def test_membership_cycle_rejected_and_named():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("matrix", "linear algebra")
+    with pytest.raises(ValueError) as err:
+        kg.add_member("linear algebra", "vector")
+    for name in ["vector", "matrix", "linear algebra"]:
+        assert name in str(err.value)
+
+
+def test_remove_member():
+    kg = linear_algebra_graph()
+    kg.add_member("matrix", "linear algebra")
+    kg.remove_member("matrix", "linear algebra")
+    assert kg.parents("matrix") == []
+    with pytest.raises(KeyError):
+        kg.remove_member("matrix", "linear algebra")
+
+
+def test_remove_node_clears_memberships_both_ways():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("matrix", "linear algebra")
+    kg.remove_node("matrix")
+    assert kg.parents("vector") == []          # matrix gone as a parent
+    assert kg.members("linear algebra") == []  # matrix gone as a child
+    assert kg.containers() == []
+
+
+def test_membership_is_invisible_to_edge_consumers():
+    kg = calculus_graph()
+    kg.add_member("tangent line", "area")  # unconnected pair in the flat graph
+    assert not kg.has_connection("tangent line", "area")
+    assert "area" not in kg.neighbors("tangent line")
+    assert all({"tangent line", "area"} != {e.source, e.target} for e in kg.edges())
+    # suggest_edges still treats the pair as unconnected (membership ≠ edge)
+    suggestions = predict.suggest_edges(kg, StubStore(), top_k=100)
+    assert any({s.a, s.b} == {"tangent line", "area"} for s in suggestions)
+
+
+def test_roundtrip_keeps_parents(tmp_path):
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("vector", "linear algebra")
+    storage.save(kg, tmp_path / "g.json", tmp_path / "snaps")
+    loaded = storage.load(tmp_path / "g.json")
+    assert loaded.to_dict() == kg.to_dict()
+    assert set(loaded.parents("vector")) == {"matrix", "linear algebra"}
+
+
+def test_old_save_without_parents_still_loads():
+    kg = KnowledgeGraph.from_dict(
+        {"nodes": [{"name": "limit", "position": None}], "edges": []}
+    )
+    assert kg.parents("limit") == []
+    assert kg.nodes()[0].parents == []
+    kg.add_node("calculus")
+    kg.add_member("limit", "calculus")  # legacy node is still a valid child
+    assert kg.parents("limit") == ["calculus"]
+
+
 # ---- storage -----------------------------------------------------------------
 
 def test_save_load_roundtrip(tmp_path):
