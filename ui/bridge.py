@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from app import llm, predict, reason, storage
+from app import llm, predict, reason, storage, views
 from app.embeddings import EmbeddingStore
 from app.graph import Edge, KnowledgeGraph
 from app.layout import meaning_positions
@@ -131,6 +131,34 @@ class Api:
             self._kg.remove_edge(source, target, predicate)
             self._autosave()
             return self.get_state()
+
+    # -- membership (abstraction levels) ----------------------------------------
+
+    def add_member(self, child: str, parent: str) -> dict:
+        """Record that child is part of parent. Cycles raise, and the
+        rejection reaches the page as an error message."""
+        with self._lock:
+            added = self._kg.add_member(child, parent)
+            if added:
+                self._autosave()
+            return self.get_state() | {"added": added}
+
+    def remove_member(self, child: str, parent: str) -> dict:
+        with self._lock:
+            self._kg.remove_member(child, parent)
+            self._autosave()
+            return self.get_state()
+
+    def suggest_members(self, top_k: int = 8) -> list[dict]:
+        """Concepts that probably belong inside a container (math only)."""
+        with self._lock:
+            suggestions = predict.suggest_members(self._kg, self._store, top_k=top_k)
+        return [s.model_dump() for s in suggestions]
+
+    def get_focus_view(self, focused: list[str]) -> dict:
+        """Everything the page needs to draw a zoom into these containers."""
+        with self._lock:
+            return views.focus_view(self._kg, focused)
 
     # -- the smart features ----------------------------------------------------
 
