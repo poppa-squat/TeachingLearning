@@ -4,6 +4,11 @@ __pycache__/
 .venv/
 .pytest_cache/
 
+# Local secrets / config — the DeepSeek API key lives here, never commit it.
+# .env.example IS committed as a template (see the ! rule below).
+.env
+!.env.example
+
 # Runtime data (the user's map, its history, and the embedding cache)
 graph.json
 snapshots/

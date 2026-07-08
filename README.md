@@ -29,6 +29,37 @@ The first run downloads the small embedding model (~90 MB) automatically.
 If Ollama isn't running, the app still works: your relationship sentences are
 stored verbatim and the AI-assisted features switch off until it's back.
 
+## Configuration
+
+By default the plain-English features run locally through Ollama — no setup
+beyond the steps above. To use the DeepSeek cloud model instead (faster, richer
+suggestions; paid, prepaid credits), create a `.env` file in the project root:
+
+```bash
+cp .env.example .env
+# then edit .env and set your DEEPSEEK_API_KEY
+```
+
+`.env` is loaded automatically at startup and is git-ignored, so your key stays
+out of version control. The keys it accepts:
+
+| Variable            | Default                  | Notes                                    |
+| ------------------- | ------------------------ | ---------------------------------------- |
+| `LLM_PROVIDER`      | `ollama`                 | Set to `deepseek` to use the cloud API.  |
+| `DEEPSEEK_API_KEY`  | —                        | Required when `LLM_PROVIDER=deepseek`.   |
+| `DEEPSEEK_MODEL`    | `deepseek-v4-pro`        | Optional override.                       |
+| `OLLAMA_URL`        | `http://localhost:11434` | Optional override.                       |
+| `OLLAMA_MODEL`      | `qwen3:4b`               | Optional override.                       |
+
+Already-exported shell variables take precedence over `.env`, so you can still
+override any of these for a single run:
+
+```bash
+LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-... uv run main.py
+```
+
+DeepSeek spend is logged to `llm_costs.log` (one line per API call).
+
 ## Run
 
 ```bash

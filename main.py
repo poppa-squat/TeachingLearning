@@ -7,6 +7,13 @@ import logging
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env before importing anything from /app: llm.py reads LLM_PROVIDER and
+# the DeepSeek settings at import time, so the values must be in the environment
+# first. Real (already-exported) env vars win over the file.
+load_dotenv(Path(__file__).parent / ".env")
+
 # WebKitGTK's DMA-BUF renderer breaks WebGL on NVIDIA drivers; must be set
 # before WebKit is loaded.
 os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
