@@ -21,7 +21,7 @@ Provider selection (env vars):
     OLLAMA_MODEL        default "qwen3:4b"
     DEEPSEEK_API_KEY    required when LLM_PROVIDER=deepseek
     DEEPSEEK_MODEL      default "deepseek-v4-pro"
-    LLM_COST_LOG        default <project root>/llm_costs.log
+    LLM_COST_LOG        default <per-user data dir>/llm_costs.log (see app.paths)
 
 Cost tracking: when the provider is DeepSeek, every API response (including
 Instructor's validation retries — they cost money too) appends one line to the
@@ -40,6 +40,7 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
+from app import paths
 from app.graph import Edge
 from app.reason import PathAnalysis, path_text
 
@@ -75,11 +76,7 @@ _PRICES = {
     "deepseek-v4-flash": (0.0028, 0.14, 0.28),
 }
 
-COST_LOG = Path(
-    os.environ.get(
-        "LLM_COST_LOG", Path(__file__).resolve().parent.parent / "llm_costs.log"
-    )
-)
+COST_LOG = Path(os.environ.get("LLM_COST_LOG") or paths.data_path("llm_costs.log"))
 
 _current_job = "?"  # which public function made the call; set before each call
 _total: float | None = None  # running all-time total, seeded from the log file
