@@ -17,13 +17,20 @@ from pathlib import Path
 
 import numpy as np
 
+from app import paths
+
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-CACHE_FILE = Path("embeddings_cache.npz")
+
+# Sentinel for "no cache_file was given, use the per-user default". Distinct
+# from None, which explicitly means "run in-memory only, persist nothing".
+_DEFAULT_CACHE = object()
 
 
 class EmbeddingStore:
-    def __init__(self, cache_file: Path | None = CACHE_FILE) -> None:
+    def __init__(self, cache_file: Path | None | object = _DEFAULT_CACHE) -> None:
         self._cache: dict[str, np.ndarray] = {}
+        if cache_file is _DEFAULT_CACHE:
+            cache_file = paths.data_path("embeddings_cache.npz")
         self._cache_file = Path(cache_file) if cache_file else None
         self._model = None  # loaded lazily; costs a few seconds + download on first run
         self._model_lock = threading.Lock()

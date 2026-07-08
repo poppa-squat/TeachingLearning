@@ -4,7 +4,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Runtime data (the user's map, its history, and the embedding cache)
+# Runtime data (the user's map, its history, the embedding cache, cost log).
+# By default these live in the per-user data dir (see app/paths.py), but they
+# land here if TEACHINGLEARNING_DATA_DIR points at the project during dev.
 graph.json
 snapshots/
 embeddings_cache.npz

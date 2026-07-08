@@ -5,11 +5,14 @@ Run with:  uv run main.py
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 # WebKitGTK's DMA-BUF renderer breaks WebGL on NVIDIA drivers; must be set
-# before WebKit is loaded.
-os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+# before WebKit is loaded. Linux/WebKitGTK-only — on macOS (Cocoa WebKit) and
+# Windows (WebView2) this variable is meaningless, so scope it to Linux.
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 import webview
 
