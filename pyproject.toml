@@ -18,6 +18,8 @@ dependencies = [
     # macOS uses Cocoa WebKit and Windows uses WebView2, neither of which needs
     # it — so scope it to Linux to keep `uv sync` working on those platforms.
     "pygobject>=3.56.3; sys_platform == 'linux'",
+    "pygobject>=3.56.3",
+    "python-dotenv>=1.2.2",
     "pywebview>=6.2.1",
     "sentence-transformers>=5.6.0",
     "umap-learn>=0.5.12",

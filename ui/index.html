@@ -125,6 +125,15 @@
   #status { position: fixed; left: 346px; bottom: 10px; font-size: 12px;
             color: var(--muted); pointer-events: none; }
 
+  /* ---- focus view ---- */
+  #focus-crumbs .sel-chip { cursor: pointer; }
+  #focus-crumbs .sel-chip:hover { background: #2a3c5b; }
+  #focus-crumbs .sel-chip.current { background: var(--accent); color: #0b1524; }
+  .legend-row { display: flex; align-items: center; gap: 6px; font-size: 12px;
+                margin: 3px 0; }
+  .legend-row .dot { display: inline-block; width: 10px; height: 10px;
+                     border-radius: 50%; flex: none; }
+
   /* ---- 3D canvas ---- */
   #graph { flex: 1; height: 100%; }
 </style>
@@ -142,6 +151,15 @@
       </div>
       <textarea id="concept-desc" class="desc"
         placeholder="Definition (optional) — e.g. “a rectangular grid of numbers that represents a linear map”"></textarea>
+    </section>
+
+    <section id="focus-section" hidden>
+      <h2>Focus</h2>
+      <div id="focus-crumbs"></div>
+      <div id="focus-legend"></div>
+      <p class="hint">Nodes inside the focused container(s); dimmed nodes reach
+        in from outside. Double-click a marked node to zoom deeper.</p>
+      <button id="focus-back">Back</button>
     </section>
 
     <section>
@@ -179,12 +197,18 @@
     </section>
 
     <section>
+      <h2>Structure suggestions</h2>
+      <button id="member-suggest-btn">Find likely members of containers</button>
+      <div id="member-suggest-out"></div>
+    </section>
+
+    <section>
       <h2>Linchpins</h2>
       <button id="linchpin-btn">Find linchpin relationships</button>
       <div id="linchpin-out"></div>
     </section>
 
-    <section>
+    <section id="layout-section">
       <h2>Layout</h2>
       <div class="toggle">
         <button id="mode-manual" class="active">Manual</button>

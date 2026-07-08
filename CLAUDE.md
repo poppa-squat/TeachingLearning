@@ -68,6 +68,15 @@ Short glossary so nothing here is mysterious:
    whether the different paths *agree* or *disagree*, and has the AI model
    summarise the result (one relationship if they agree, several distinct
    "facets" if they disagree).
+7. **Abstraction levels** — on top of the flat graph sits one structural
+   relation: **membership** ("vector is part of matrix"). It forms a DAG (a
+   concept may sit in several containers; cycles are rejected), and a
+   "container" is just an ordinary node that happens to have members. Zooming
+   into a container is a *view* computed from the flat graph — the members,
+   the dimmed "ghost" nodes reaching in from outside, and their edges — not a
+   change to the data. Likely members of a container are suggested by math
+   alone (embedding closeness to the members' centroid + shared neighbours);
+   there is no wording to generate, so the AI model plays no part here.
 
 **Core principle — geometry decides, the model verbalises:** all the
 *decisions* about what relates to what are made by math on the embeddings (plain,
@@ -179,6 +188,8 @@ class Node(BaseModel):
     position: tuple[float, float, float] | None = None
     # ^ saved manual (x, y, z) for manual layout mode; None if never placed by hand.
     #   Meaning-based positions are NOT stored here — they're recomputed by UMAP.
+    parents: list[str] = []
+    # ^ containers this concept is a direct member of (the membership DAG, §3).
 
 class Edge(BaseModel):
     source: str        # the concept the relationship starts from
@@ -197,6 +208,10 @@ Notes:
 - Near-duplicate wordings ("is a prerequisite for" vs "you need before") are
   tidied up *after* storage by clustering their embeddings — not by restricting
   what the user can type.
+- **Membership is NOT an Edge.** It has no predicate, is never stored in the
+  MultiDiGraph, and must stay out of everything that consumes edges: edge
+  suggestions (`predict.suggest_edges`), path reasoning (`reason.py`), and
+  predicate embedding. It is pure structure; zooming is a view, not data.
 
 ---
 
@@ -216,8 +231,9 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
     embeddings.py     make + cache embeddings (sentence-transformers)
     llm.py            model calls (DeepSeek, or the Ollama fallback), wrapped
                       with Instructor/Pydantic; writes the cost log
-    predict.py        missing-edge scoring (meaning + structure)
+    predict.py        missing-edge + missing-member scoring (meaning + structure)
     reason.py         path-finding, path comparison, agree/disagree logic
+    views.py          focus view: members, Venn signatures, ghosts (zooming, §3)
     layout.py         meaning-based 3D positions via UMAP (clustering mode)
   /ui
     index.html        the page the graph is drawn into (side panel + 3D canvas)

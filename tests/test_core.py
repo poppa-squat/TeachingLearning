@@ -7,6 +7,7 @@ import pytest
 from app import predict, reason, storage
 from app.graph import Edge, KnowledgeGraph
 from app.layout import meaning_positions
+from app.views import focus_view
 
 
 class StubStore:
@@ -123,6 +124,205 @@ def test_old_save_without_descriptions_still_loads():
     assert kg.nodes()[0].description == ""
 
 
+# ---- membership ----------------------------------------------------------------
+
+def linear_algebra_graph() -> KnowledgeGraph:
+    kg = KnowledgeGraph()
+    for n in ["linear algebra", "matrix", "vector", "eigenvalues"]:
+        kg.add_node(n)
+    return kg
+
+
+def test_add_member_and_accessors():
+    kg = linear_algebra_graph()
+    assert kg.add_member("matrix", "linear algebra") is True
+    assert kg.add_member("matrix", "linear algebra") is False  # already a member
+    assert kg.members("linear algebra") == ["matrix"]
+    assert kg.parents("matrix") == ["linear algebra"]
+    assert kg.containers() == ["linear algebra"]
+    assert kg.parents("vector") == []
+
+
+def test_multi_parent_membership():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("vector", "linear algebra")
+    assert set(kg.parents("vector")) == {"matrix", "linear algebra"}
+    assert set(kg.containers()) == {"matrix", "linear algebra"}
+
+
+def test_self_membership_rejected():
+    kg = linear_algebra_graph()
+    with pytest.raises(ValueError):
+        kg.add_member("matrix", "matrix")
+
+
+def test_membership_cycle_rejected_and_named():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("matrix", "linear algebra")
+    with pytest.raises(ValueError) as err:
+        kg.add_member("linear algebra", "vector")
+    for name in ["vector", "matrix", "linear algebra"]:
+        assert name in str(err.value)
+
+
+def test_remove_member():
+    kg = linear_algebra_graph()
+    kg.add_member("matrix", "linear algebra")
+    kg.remove_member("matrix", "linear algebra")
+    assert kg.parents("matrix") == []
+    with pytest.raises(KeyError):
+        kg.remove_member("matrix", "linear algebra")
+
+
+def test_remove_node_clears_memberships_both_ways():
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("matrix", "linear algebra")
+    kg.remove_node("matrix")
+    assert kg.parents("vector") == []          # matrix gone as a parent
+    assert kg.members("linear algebra") == []  # matrix gone as a child
+    assert kg.containers() == []
+
+
+def test_membership_is_invisible_to_edge_consumers():
+    kg = calculus_graph()
+    kg.add_member("tangent line", "area")  # unconnected pair in the flat graph
+    assert not kg.has_connection("tangent line", "area")
+    assert "area" not in kg.neighbors("tangent line")
+    assert all({"tangent line", "area"} != {e.source, e.target} for e in kg.edges())
+    # suggest_edges still treats the pair as unconnected (membership ≠ edge)
+    suggestions = predict.suggest_edges(kg, StubStore(), top_k=100)
+    assert any({s.a, s.b} == {"tangent line", "area"} for s in suggestions)
+
+
+def test_roundtrip_keeps_parents(tmp_path):
+    kg = linear_algebra_graph()
+    kg.add_member("vector", "matrix")
+    kg.add_member("vector", "linear algebra")
+    storage.save(kg, tmp_path / "g.json", tmp_path / "snaps")
+    loaded = storage.load(tmp_path / "g.json")
+    assert loaded.to_dict() == kg.to_dict()
+    assert set(loaded.parents("vector")) == {"matrix", "linear algebra"}
+
+
+def test_old_save_without_parents_still_loads():
+    kg = KnowledgeGraph.from_dict(
+        {"nodes": [{"name": "limit", "position": None}], "edges": []}
+    )
+    assert kg.parents("limit") == []
+    assert kg.nodes()[0].parents == []
+    kg.add_node("calculus")
+    kg.add_member("limit", "calculus")  # legacy node is still a valid child
+    assert kg.parents("limit") == ["calculus"]
+
+
+# ---- focus view ----------------------------------------------------------------
+
+def venn_graph() -> KnowledgeGraph:
+    """Two containers A and B: u1 only in A, u2 only in B, s in both;
+    ext is outside with an edge to u1; far is outside and unconnected."""
+    kg = KnowledgeGraph()
+    for n in ["A", "B", "u1", "u2", "s", "ext", "far"]:
+        kg.add_node(n)
+    kg.add_member("u1", "A")
+    kg.add_member("s", "A")
+    kg.add_member("s", "B")
+    kg.add_member("u2", "B")
+    kg.add_edge(Edge(source="u1", target="u2", predicate="relates to", directed=False))
+    kg.add_edge(Edge(source="ext", target="u1", predicate="feeds into", directed=True))
+    kg.add_edge(Edge(source="A", target="u1", predicate="mentions", directed=True))
+    return kg
+
+
+def test_focus_view_two_container_venn():
+    view = focus_view(venn_graph(), ["A", "B"])
+    nodes = {n["name"]: n for n in view["nodes"]}
+    assert set(nodes) == {"u1", "u2", "s", "ext"}   # far has no edge in: absent
+    assert nodes["u1"]["signature"] == ["A"]
+    assert nodes["u2"]["signature"] == ["B"]
+    assert nodes["s"]["signature"] == ["A", "B"]
+    assert nodes["ext"]["ghost"] and nodes["ext"]["signature"] == []
+    assert not nodes["u1"]["ghost"]
+    groups = {tuple(g["signature"]): g["count"] for g in view["groups"]}
+    assert groups == {("A",): 1, ("B",): 1, ("A", "B"): 1}
+
+
+def test_focus_view_edge_selection():
+    view = focus_view(venn_graph(), ["A", "B"])
+    pairs = {(e["source"], e["target"]) for e in view["edges"]}
+    assert ("u1", "u2") in pairs            # member–member
+    assert ("ext", "u1") in pairs           # member–ghost boundary
+    assert ("A", "u1") not in pairs         # focused containers aren't rendered
+
+
+def test_focus_view_single_container_hides_ghostless_and_container():
+    kg = venn_graph()
+    view = focus_view(kg, ["A"])
+    nodes = {n["name"]: n for n in view["nodes"]}
+    # members of A plus the two nodes reaching in (u2 via u1's edge, ext)
+    assert set(nodes) == {"u1", "s", "ext", "u2"}
+    assert nodes["u2"]["ghost"]  # a member of B is just a ghost when B isn't focused
+
+
+def test_focus_view_ghost_to_ghost_edges_excluded():
+    kg = venn_graph()
+    kg.add_edge(Edge(source="ext", target="far", predicate="knows", directed=False))
+    kg.add_edge(Edge(source="far", target="u2", predicate="uses", directed=True))
+    view = focus_view(kg, ["A", "B"])
+    pairs = {(e["source"], e["target"]) for e in view["edges"]}
+    assert ("far", "u2") in pairs       # far is now a ghost (edge to member u2)
+    assert ("ext", "far") not in pairs  # but ghost–ghost edges never render
+
+
+def test_focus_view_three_containers():
+    kg = KnowledgeGraph()
+    for n in ["A", "B", "C", "t", "ab"]:
+        kg.add_node(n)
+    for c in ["A", "B", "C"]:
+        kg.add_member("t", c)
+    kg.add_member("ab", "A")
+    kg.add_member("ab", "B")
+    view = focus_view(kg, ["A", "B", "C"])
+    nodes = {n["name"]: n for n in view["nodes"]}
+    assert nodes["t"]["signature"] == ["A", "B", "C"]
+    assert nodes["ab"]["signature"] == ["A", "B"]
+    groups = {tuple(g["signature"]): g["count"] for g in view["groups"]}
+    assert groups == {("A", "B"): 1, ("A", "B", "C"): 1}
+
+
+def test_focus_view_nested_container_is_flagged_zoomable():
+    kg = KnowledgeGraph()
+    for n in ["algebra", "matrix", "entry"]:
+        kg.add_node(n)
+    kg.add_member("matrix", "algebra")
+    kg.add_member("entry", "matrix")
+    view = focus_view(kg, ["algebra"])
+    nodes = {n["name"]: n for n in view["nodes"]}
+    assert set(nodes) == {"matrix"}  # entry is a level deeper, not rendered
+    assert nodes["matrix"]["has_members"]
+
+
+def test_focus_view_focused_member_container_not_rendered():
+    kg = KnowledgeGraph()
+    for n in ["algebra", "matrix", "entry"]:
+        kg.add_node(n)
+    kg.add_member("matrix", "algebra")
+    kg.add_member("entry", "matrix")
+    view = focus_view(kg, ["algebra", "matrix"])
+    names = {n["name"] for n in view["nodes"]}
+    assert names == {"entry"}  # matrix is focused, so not shown as a member
+
+
+def test_focus_view_validates_input():
+    kg = venn_graph()
+    with pytest.raises(ValueError):
+        focus_view(kg, [])
+    with pytest.raises(KeyError):
+        focus_view(kg, ["A", "nope"])
+
+
 # ---- storage -----------------------------------------------------------------
 
 def test_save_load_roundtrip(tmp_path):
@@ -204,6 +404,70 @@ def test_descriptions_feed_the_meaning_signal():
     })
     top = predict.suggest_edges(kg, store, top_k=3)[0]
     assert {top.a, top.b} == {"a", "b"}
+
+
+def test_suggest_members_ranks_centroid_match_first():
+    kg = KnowledgeGraph()
+    for n in ["linalg", "m1", "m2", "x", "y"]:
+        kg.add_node(n)
+    kg.add_member("m1", "linalg")
+    kg.add_member("m2", "linalg")
+    store = StubStore({
+        "m1": [1, 0, 0, 0, 0, 0, 0, 0],
+        "m2": [0.9, 0.1, 0, 0, 0, 0, 0, 0],
+        "x": [0.95, 0.05, 0, 0, 0, 0, 0, 0],  # close to the member centroid
+        "y": [-1, 0, 0, 0, 0, 0, 0, 0],       # opposite
+    })
+    ranked = predict.suggest_members(kg, store, top_k=10)
+    assert (ranked[0].node, ranked[0].container) == ("x", "linalg")
+    scores = {s.node: s.score for s in ranked}
+    assert scores["x"] > scores["y"]
+    assert all(0.0 <= s.score <= 1.0 for s in ranked)
+
+
+def test_suggest_members_never_suggests_existing_relations():
+    kg = KnowledgeGraph()
+    for n in ["a", "b", "c", "free"]:
+        kg.add_node(n)
+    kg.add_member("a", "b")
+    kg.add_member("b", "c")
+    ranked = predict.suggest_members(kg, StubStore(), top_k=100)
+    suggested = {(s.node, s.container) for s in ranked}
+    assert ("a", "b") not in suggested  # already a member
+    assert ("b", "a") not in suggested  # reverse: a container into its member
+    assert ("a", "c") not in suggested  # transitively inside already
+    assert ("c", "a") not in suggested  # would close a cycle
+    assert ("free", "b") in suggested
+
+
+def test_suggest_members_empty_container_falls_back_to_own_embedding():
+    kg = KnowledgeGraph()
+    for n in ["geometry", "p", "q"]:
+        kg.add_node(n)
+    store = StubStore({
+        "geometry": [1, 0, 0, 0, 0, 0, 0, 0],
+        "p": [0.99, 0.1, 0, 0, 0, 0, 0, 0],
+        "q": [-1, 0, 0, 0, 0, 0, 0, 0],
+    })
+    assert predict.suggest_members(kg, store) == []  # no containers yet
+    ranked = predict.suggest_members(kg, store, containers=["geometry"])
+    assert (ranked[0].node, ranked[0].container) == ("p", "geometry")
+
+
+def test_suggest_members_structure_favours_neighbours_of_members():
+    kg = KnowledgeGraph()
+    for n in ["c", "m1", "m2", "x", "y"]:
+        kg.add_node(n)
+    kg.add_member("m1", "c")
+    kg.add_member("m2", "c")
+    kg.add_edge(Edge(source="x", target="m1", predicate="relates to", directed=False))
+    kg.add_edge(Edge(source="x", target="m2", predicate="relates to", directed=False))
+    same = [1, 0, 0, 0, 0, 0, 0, 0]
+    store = StubStore({"x": same, "y": same})  # identical meaning signal
+    scores = {s.node: s for s in predict.suggest_members(kg, store, top_k=10)}
+    assert scores["x"].structure == 1.0
+    assert scores["y"].structure == 0.0
+    assert scores["x"].score > scores["y"].score
 
 
 # ---- reason ------------------------------------------------------------------

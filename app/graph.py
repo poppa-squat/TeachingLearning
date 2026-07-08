@@ -7,12 +7,17 @@ relationship is asymmetric (True: source -> target order matters) or symmetric
 
 Backed by a NetworkX MultiDiGraph so two concepts can be linked by several
 distinct relationships at once.
+
+On top of the flat graph sits one structural relation: membership ("child is
+part of / constructs parent"), a DAG kept as a per-node list of parents. It is
+NOT an Edge — no predicate, never stored in the MultiDiGraph — so everything
+that consumes edges (suggestions, path reasoning, embeddings) never sees it.
 """
 
 from __future__ import annotations
 
 import networkx as nx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Node(BaseModel):
@@ -21,6 +26,9 @@ class Node(BaseModel):
     position: tuple[float, float, float] | None = None
     # Saved manual (x, y, z) for manual layout mode; None if never placed by
     # hand. Meaning-based positions are recomputed by UMAP, never stored.
+    parents: list[str] = Field(default_factory=list)
+    # Containers this concept is a direct member of (membership DAG, §6).
+    # Pure structure: not an Edge, no predicate, invisible to edge consumers.
 
 
 class Edge(BaseModel):
@@ -45,12 +53,18 @@ class KnowledgeGraph:
             raise ValueError("Concept name cannot be empty")
         if name in self._g:
             return False
-        self._g.add_node(name, description=description.strip(), position=None)
+        self._g.add_node(
+            name, description=description.strip(), position=None, parents=[]
+        )
         return True
 
     def remove_node(self, name: str) -> None:
         self._require(name)
         self._g.remove_node(name)
+        for _, data in self._g.nodes(data=True):
+            parents = data.get("parents", [])
+            if name in parents:
+                parents.remove(name)
 
     def has_node(self, name: str) -> bool:
         return name in self._g
@@ -69,6 +83,7 @@ class KnowledgeGraph:
                 name=n,
                 description=data.get("description", ""),
                 position=data.get("position"),
+                parents=data.get("parents", []),
             )
             for n, data in self._g.nodes(data=True)
         ]
@@ -82,6 +97,80 @@ class KnowledgeGraph:
         self._require(name)
         description = self._g.nodes[name].get("description", "")
         return f"{name}: {description}" if description else name
+
+    # -- membership (abstraction levels) ---------------------------------------
+
+    def add_member(self, child: str, parent: str) -> bool:
+        """Record that `child` is part of `parent`. Returns False if it
+        already is. Membership must stay a DAG: self-membership and cycles
+        raise ValueError."""
+        self._require(child)
+        self._require(parent)
+        if child == parent:
+            raise ValueError("A concept cannot be a member of itself")
+        if parent in self._g.nodes[child].get("parents", []):
+            return False
+        chain = self._ancestor_chain(parent, child)
+        if chain is not None:
+            cycle = " → ".join([child, *chain])
+            raise ValueError(f"Membership cycle: {cycle}")
+        self._g.nodes[child].setdefault("parents", []).append(parent)
+        return True
+
+    def remove_member(self, child: str, parent: str) -> None:
+        self._require(child)
+        self._require(parent)
+        parents = self._g.nodes[child].get("parents", [])
+        if parent not in parents:
+            raise KeyError(f"{child!r} is not a member of {parent!r}")
+        parents.remove(parent)
+
+    def members(self, parent: str) -> list[str]:
+        """Direct members of `parent`."""
+        self._require(parent)
+        return [
+            n
+            for n, data in self._g.nodes(data=True)
+            if parent in data.get("parents", [])
+        ]
+
+    def parents(self, child: str) -> list[str]:
+        """Containers `child` is a direct member of."""
+        self._require(child)
+        return list(self._g.nodes[child].get("parents", []))
+
+    def containers(self) -> list[str]:
+        """Nodes with at least one member."""
+        named = {
+            p
+            for _, data in self._g.nodes(data=True)
+            for p in data.get("parents", [])
+        }
+        return [n for n in self._g.nodes if n in named]
+
+    def related_by_membership(self, a: str, b: str) -> bool:
+        """True if membership already links a and b in either direction,
+        directly or through intermediate containers."""
+        return (
+            self._ancestor_chain(a, b) is not None
+            or self._ancestor_chain(b, a) is not None
+        )
+
+    def _ancestor_chain(self, start: str, target: str) -> list[str] | None:
+        """A membership chain from `start` up through its parents to `target`,
+        or None if `target` is not an ancestor of `start`."""
+        stack = [(start, [start])]
+        seen: set[str] = set()
+        while stack:
+            name, path = stack.pop()
+            if name == target:
+                return path
+            if name in seen:
+                continue
+            seen.add(name)
+            for p in self.parents(name):
+                stack.append((p, [*path, p]))
+        return None
 
     # -- edges ---------------------------------------------------------------
 
@@ -163,6 +252,7 @@ class KnowledgeGraph:
                 node.name,
                 description=node.description,
                 position=tuple(node.position) if node.position else None,
+                parents=list(node.parents),
             )
         for ed in data.get("edges", []):
             kg.add_edge(Edge(**ed))
