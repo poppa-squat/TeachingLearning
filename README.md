@@ -1,10 +1,9 @@
 # TeachingLearning
 
 This repository contains a desktop app for mapping your study of STEM topics (or whatever you want) as
-a 3D **knowledge graph**: concepts are nodes, and relationships between them —
-written in your own plain English — are edges. The app suggests connections you
+a 3D **knowledge graph**: concepts are nodes, and relationships between them are edges. The app suggests connections you
 haven't drawn yet, explains how far-apart concepts link up, and shows which
-relationships your understanding hinges on. Everything runs locally; see
+relationships your understanding hinges on. Everything can run locally; see
 `CLAUDE.md` for the full design.
 
 ## Setup
