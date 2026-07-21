@@ -90,6 +90,16 @@ Short glossary so nothing here is mysterious:
    case-insensitive endpoint matching, drop anything unresolvable) and become a
    brand-new map in its own tab — the user's existing maps are never touched.
 
+9. **Asking the map (graph RAG)** — the user types a question; the query is
+   embedded and compared against every concept. The concepts close enough to
+   the question become *seeds*, their one-hop neighbourhood is collected, and
+   the relations inside it become the facts. The AI model then words a
+   coherent answer **from those facts only**, and must flag when they don't
+   actually answer the question. If *no* concept clears the similarity floor,
+   the app says the map doesn't cover the question — decided by geometry,
+   before the model is ever called — rather than letting it improvise.
+   With no model available, the retrieved facts are shown raw.
+
 **Core principle — geometry decides, the model verbalises:** all the
 *decisions* about what relates to what are made by math on the embeddings (plain,
 fast, repeatable). The generative AI model is only used to turn plain English
@@ -263,6 +273,8 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
     llm.py            model calls (DeepSeek, or the Ollama fallback), wrapped
                       with Instructor/Pydantic; writes the cost log
     predict.py        missing-edge + missing-member scoring (meaning + structure)
+    rag.py            ask-the-map retrieval: query-embedding seeds, one-hop
+                      neighbourhood, relevance floor (graph RAG, §3 step 9)
     reason.py         path-finding, path comparison, agree/disagree logic
     views.py          focus view: members, Venn signatures, ghosts (zooming, §3)
     layout.py         meaning-based 3D positions via UMAP (clustering mode)
@@ -304,6 +316,13 @@ by `app/paths.py` (e.g. `~/.local/share/TeachingLearning` on Linux):
   `app/ingest.py`. Import requires a model (DeepSeek or Ollama); with no model
   the feature is off — it *is* an AI-assisted feature, so this respects the
   graceful-degradation rule.
+- **Ask the map / graph RAG (July 2026):** retrieval and the on-map/off-map
+  decision are pure geometry (`app/rag.py`: cosine floor, seed concepts,
+  one-hop neighbourhood); the model only synthesises an answer from the
+  retrieved facts and must admit when they don't answer the question
+  (`llm.answer_question`, the structured `answerable` flag). Off-map
+  questions are refused *before* any model call. With no model, the
+  retrieved facts are shown raw.
 - **Desktop window:** pywebview window + 3d-force-graph for 3D drawing (§4).
 - **Direction:** keep the `directed` flag; it marks symmetric vs asymmetric only
   (§6).
