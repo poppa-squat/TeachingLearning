@@ -1,4 +1,4 @@
-"""The generative model's three translation jobs (and nothing more):
+"""The generative model's four translation jobs (and nothing more):
 
 1. Plain English -> tidy record: the user's sentence about how two concepts
    relate becomes (source, target, predicate, directed).
@@ -9,6 +9,9 @@
    surrounding pipeline). This is the one place the model chooses *content*
    — deciding what in a document matters is inherently a language job — but
    the records it emits are still cleaned up deterministically afterwards.
+4. Retrieved facts -> plain English: answer a question about the map using
+   only the facts geometry already retrieved (app/rag.py), admitting when
+   they don't cover the question rather than improvising.
 
 All reasoning decisions are made elsewhere by math on embeddings; this module
 only translates. It talks to one of two providers, both through the
@@ -249,6 +252,24 @@ class ConnectionSummary(BaseModel):
     )
 
 
+class GroundedAnswer(BaseModel):
+    """An answer to a question about the map, grounded in retrieved facts."""
+
+    answerable: bool = Field(
+        description=(
+            "True only if the provided facts actually address the question. "
+            "False if they are merely near the topic without answering it."
+        )
+    )
+    answer: str = Field(
+        description=(
+            "If answerable: a coherent answer built strictly from the "
+            "provided facts. If not answerable: one or two sentences saying "
+            "what the map covers instead / what it lacks — never a guess."
+        )
+    )
+
+
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
@@ -397,6 +418,50 @@ def summarise_connection(analysis: PathAnalysis) -> ConnectionSummary:
                 ),
             },
             {"role": "user", "content": body},
+        ],
+    )
+
+
+def answer_question(
+    question: str,
+    facts: list[str],
+    definitions: dict[str, str],
+) -> GroundedAnswer:
+    """Word an answer to the user's question from the facts the math layer
+    retrieved (app/rag.py). The model must not add knowledge of its own: if
+    the facts don't answer the question, it says so."""
+    global _current_job
+    _current_job = "answer_question"
+
+    lines = []
+    if definitions:
+        lines.append("Concept definitions:")
+        lines += [f'- "{name}": {text}' for name, text in definitions.items()]
+        lines.append("")
+    lines.append("Relationships on the map:")
+    lines += [f"- {fact}" for fact in facts]
+    lines += ["", f"Question: {question}"]
+
+    return _client().chat.completions.create(
+        model=MODEL,
+        max_retries=_MAX_RETRIES,
+        response_model=GroundedAnswer,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You answer a learner's question using ONLY the concepts, "
+                    "definitions, and relationships from their own knowledge "
+                    "map, given below. Synthesise the relevant facts into a "
+                    "coherent, plain answer; you may connect facts through "
+                    "shared concepts, but every claim must trace back to the "
+                    "given facts — bring in no outside knowledge. If the "
+                    "facts do not actually answer the question, set "
+                    "answerable to false and briefly say what the map does "
+                    "and doesn't cover; never guess or pad." + _NUDGE
+                ),
+            },
+            {"role": "user", "content": "\n".join(lines)},
         ],
     )
 

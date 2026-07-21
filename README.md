@@ -77,6 +77,9 @@ uv run main.py
 - **Layout toggle**: arrange nodes by hand (positions are saved), or let
   meaning decide — similar concepts cluster together.
 - **Suggestions / Explain / Linchpins**: see connections you didn't draw.
+- **Ask your map**: ask a question in plain English; the answer is built only
+  from the concepts and relationships on the active map. If the map doesn't
+  cover the question, the app says so instead of making something up.
 - **History**: save a snapshot any time; roll back fearlessly (rolling back
   itself snapshots your current map first).
 

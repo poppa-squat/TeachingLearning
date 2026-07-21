@@ -22,7 +22,7 @@ import threading
 
 from pathlib import Path
 
-from app import ingest, llm, predict, reason, storage, views
+from app import ingest, llm, predict, rag, reason, storage, views
 from app.embeddings import EmbeddingStore
 from app.graph import Edge, KnowledgeGraph
 from app.layout import meaning_positions
@@ -209,6 +209,38 @@ class Api:
                 result["facet_sentences"] = None
         else:
             result["facet_sentences"] = None
+        return result
+
+    def ask(self, question: str) -> dict:
+        """Answer a question from the active map (graph RAG). Geometry decides
+        whether the map covers the question at all and which slice of it is
+        relevant; the model only words an answer from that slice. With no
+        model, the relevant facts are returned raw."""
+        question = question.strip()
+        if not question:
+            raise ValueError("Type a question first")
+        with self._lock:
+            retrieval = rag.retrieve(self._kg, self._store, question)
+        result = {
+            "related": retrieval.related,
+            "seeds": [s.model_dump() for s in retrieval.seeds],
+            "facts": [rag.fact_text(e) for e in retrieval.facts],
+            "answer": None,
+            "answerable": None,
+        }
+        if not retrieval.related or not retrieval.facts:
+            # An isolated concept can match the query yet carry no relations;
+            # with nothing to ground an answer in, don't ask the model.
+            return result
+        if self._llm_available:
+            try:
+                grounded = llm.answer_question(
+                    question, result["facts"], retrieval.definitions
+                )
+                result["answer"] = grounded.answer
+                result["answerable"] = grounded.answerable
+            except Exception:
+                log.exception("LLM answer failed; returning raw facts only")
         return result
 
     def linchpins(self, top_k: int = 5) -> list[dict]:

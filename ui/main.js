@@ -212,7 +212,8 @@ function afterMapChange() {
   focusStack = [];
   focusData = null;
   for (const id of ['suggest-out', 'member-suggest-out', 'linchpin-out',
-                    'explain-out', 'relate-result', 'import-result']) {
+                    'explain-out', 'relate-result', 'import-result',
+                    'ask-out']) {
     $(id).replaceChildren();
   }
   render();
@@ -712,6 +713,57 @@ async function addRelationship() {
   }
 }
 
+async function ask() {
+  const question = $('ask-input').value.trim();
+  if (!question) return;
+  const btn = $('ask-btn');
+  const out = $('ask-out');
+  btn.disabled = true;
+  out.replaceChildren(el('p', { class: 'spin' }, 'searching the map…'));
+  try {
+    const r = await api.ask(question);
+    out.replaceChildren();
+    if (!r.related) {
+      out.append(el('p', { class: 'hint' },
+        'Your map doesn’t seem to cover that — no concept on it is close ' +
+        'enough to the question.'));
+      return;
+    }
+    if (!r.facts.length) {
+      const names = r.seeds.map((s) => `“${s.name}”`).join(', ');
+      out.append(el('p', { class: 'hint' },
+        `The map mentions ${names}, but has no relationships around ` +
+        'them yet to build an answer from.'));
+      return;
+    }
+    if (r.answer !== null) {
+      out.append(el('div', { class: r.answerable ? 'card facet' : 'card hint' },
+        r.answer));
+      if (!r.answerable) {
+        out.append(el('p', { class: 'hint' },
+          'The nearby facts on the map don’t actually answer this. ' +
+          'They were:'));
+      }
+    } else {
+      out.append(el('p', { class: 'hint' },
+        'Model offline — showing the relevant facts raw:'));
+    }
+    for (const text of r.facts) out.append(el('div', { class: 'chain' }, text));
+    out.append(el('button', {
+      class: 'small',
+      onclick: () => {
+        selected = r.seeds.slice(0, 2).map((s) => s.name);
+        refreshSelectionUI();
+        repaint();
+      },
+    }, 'Select the matched concepts'));
+  } catch (err) {
+    out.replaceChildren(el('p', { class: 'hint' }, `Couldn’t answer: ${err}`));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function suggest() {
   const out = $('suggest-out');
   out.replaceChildren(el('p', { class: 'spin' }, 'scoring unconnected pairs…'));
@@ -893,6 +945,10 @@ function bindPanel() {
   $('relate-mode-exact').addEventListener('click', () => setRelateMode('exact'));
   $('import-file').addEventListener('click', importFile);
   $('import-paste').addEventListener('click', importPasted);
+  $('ask-btn').addEventListener('click', ask);
+  $('ask-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+  });
   $('suggest-btn').addEventListener('click', suggest);
   $('member-suggest-btn').addEventListener('click', suggestMembers);
   $('focus-back').addEventListener('click', () => focusBack());
