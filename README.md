@@ -16,7 +16,7 @@ macOS — so no browser is bundled.
 ```bash
 # 1. Linux only: system libraries for the desktop window (PyGObject build
 #    headers). Not needed on macOS or Windows — uv skips PyGObject there.
-sudo apt-get install -y libgirepository1.0-dev libgirepository-2.0-dev python3-dev
+sudo apt-get install -y libgirepository1.0-dev libgirepository-2.0-dev libcairo2-dev python3-dev
 
 # 2. Ollama + the local language model
 curl -fsSL https://ollama.com/install.sh | sh
