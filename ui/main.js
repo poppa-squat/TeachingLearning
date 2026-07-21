@@ -141,6 +141,7 @@ function buildLinks(edges, isGhost = () => false) {
 }
 
 function render() {
+  renderTabs();
   // While focused, any state change may alter members/ghosts/edges, so
   // re-fetch the view instead of redrawing stale focus data.
   if (inFocus()) { refreshFocus(); return; }
@@ -160,6 +161,125 @@ function render() {
   applyLayout();
   refreshFocusUI();
   refreshSelectionUI();
+}
+
+/* ---------- tabs (one per map) ---------- */
+
+function renderTabs() {
+  const bar = $('tabs');
+  bar.replaceChildren();
+  for (const m of state.maps ?? []) {
+    const isActive = m.id === state.active_map;
+    const tab = el('div', {
+      class: isActive ? 'tab active' : 'tab',
+      title: 'Double-click to rename',
+      onclick: () => { if (m.id !== state.active_map) switchMap(m.id); },
+      ondblclick: () => renameTab(tab, m),
+    }, m.title);
+    tab.append(el('span', {
+      class: 'close',
+      title: 'Close (deletes this map; a copy is kept in the app’s trash folder)',
+      onclick: (ev) => { ev.stopPropagation(); closeMap(m); },
+    }, '×'));
+    bar.append(tab);
+  }
+  bar.append(el('button', { id: 'tab-new', title: 'New empty map', onclick: newMap }, '+'));
+}
+
+function renameTab(tab, m) {
+  const input = el('input', { type: 'text' });
+  input.value = m.title;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { input.value = m.title; input.blur(); }
+  });
+  input.addEventListener('blur', async () => {
+    const title = input.value.trim();
+    if (title && title !== m.title) {
+      try { state = await api.rename_map(m.id, title); }
+      catch (err) { status(`couldn’t rename: ${err}`); }
+    }
+    renderTabs();
+  });
+  tab.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+// After the active map changed: drop all per-map view state and redraw.
+function afterMapChange() {
+  selected = [];
+  focusStack = [];
+  focusData = null;
+  for (const id of ['suggest-out', 'member-suggest-out', 'linchpin-out',
+                    'explain-out', 'relate-result', 'import-result']) {
+    $(id).replaceChildren();
+  }
+  render();
+  refreshSnapshots();
+}
+
+async function switchMap(id) {
+  status('switching map…');
+  try {
+    state = await api.switch_map(id);
+    afterMapChange();
+  } catch (err) {
+    status(`couldn’t switch: ${err}`);
+    return;
+  }
+  status('');
+}
+
+async function newMap() {
+  state = await api.new_map('Untitled');
+  afterMapChange();
+}
+
+async function closeMap(m) {
+  if (!confirm(`Close and delete “${m.title}”?\n(A copy is kept in the app’s trash folder on disk.)`)) return;
+  state = await api.close_map(m.id);
+  afterMapChange();
+}
+
+/* ---------- importing a document ---------- */
+
+async function importFile() {
+  await runImport(() => api.import_document());
+}
+
+async function importPasted() {
+  const box = $('import-paste-text');
+  if (!box.value.trim()) { status('paste some text first'); return; }
+  const ok = await runImport(() => api.import_text(box.value));
+  if (ok) box.value = '';
+}
+
+async function runImport(call) {
+  const buttons = [$('import-file'), $('import-paste')];
+  buttons.forEach((b) => { b.disabled = true; });
+  $('import-result').textContent = '';
+  status('distilling the document — this can take a minute…');
+  try {
+    const resp = await call();
+    if (resp.cancelled) return false;
+    const report = resp.report;
+    state = resp;
+    afterMapChange();
+    $('import-result').textContent =
+      `Distilled ${report.concepts} concepts and ${report.relations} relationships` +
+      ` into a new map.` +
+      (report.truncated
+        ? ' The document was longer than the model could read — only the start was used.'
+        : '');
+    return true;
+  } catch (err) {
+    $('import-result').textContent = `Couldn’t import: ${err}`;
+    return false;
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+    status('');
+  }
 }
 
 async function applyLayout() {
@@ -771,6 +891,8 @@ function bindPanel() {
   $('relate-add').addEventListener('click', addRelationship);
   $('relate-mode-ai').addEventListener('click', () => setRelateMode('ai'));
   $('relate-mode-exact').addEventListener('click', () => setRelateMode('exact'));
+  $('import-file').addEventListener('click', importFile);
+  $('import-paste').addEventListener('click', importPasted);
   $('suggest-btn').addEventListener('click', suggest);
   $('member-suggest-btn').addEventListener('click', suggestMembers);
   $('focus-back').addEventListener('click', () => focusBack());
@@ -800,7 +922,7 @@ async function start() {
     graph = null;
   }
   state = await api.get_state();
-  if (graph) render(); else refreshSelectionUI();
+  if (graph) render(); else { renderTabs(); refreshSelectionUI(); }
   refreshSnapshots();
   pollLLM();
 }

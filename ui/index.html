@@ -134,8 +134,21 @@
   .legend-row .dot { display: inline-block; width: 10px; height: 10px;
                      border-radius: 50%; flex: none; }
 
-  /* ---- 3D canvas ---- */
-  #graph { flex: 1; height: 100%; }
+  /* ---- tabs + 3D canvas ---- */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #tabs { display: flex; align-items: flex-end; gap: 4px; padding: 6px 8px 0;
+          border-bottom: 1px solid var(--panel-edge); overflow-x: auto;
+          flex: none; }
+  .tab { display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+         border: 1px solid var(--panel-edge); border-bottom: none;
+         border-radius: 8px 8px 0 0; color: var(--muted); cursor: pointer;
+         font-size: 13px; white-space: nowrap; }
+  .tab.active { background: var(--panel); color: var(--text); }
+  .tab .close { color: var(--muted); padding: 0 2px; border-radius: 4px; }
+  .tab .close:hover { color: var(--bad); }
+  .tab input { width: 110px; padding: 1px 4px; font-size: 12px; }
+  #tab-new { margin: 0 0 3px; padding: 2px 9px; }
+  #graph { flex: 1; min-height: 0; }
 </style>
 </head>
 <body>
@@ -151,6 +164,17 @@
       </div>
       <textarea id="concept-desc" class="desc"
         placeholder="Definition (optional) — e.g. “a rectangular grid of numbers that represents a linear map”"></textarea>
+    </section>
+
+    <section>
+      <h2>Import a document</h2>
+      <p class="hint">Distill a PDF or text file into a new map: the AI model
+        picks out the key concepts and how they connect.</p>
+      <button id="import-file" class="primary">Choose a PDF / text file…</button>
+      <textarea id="import-paste-text" class="desc"
+        placeholder="…or paste text here"></textarea>
+      <button id="import-paste">Import pasted text</button>
+      <div id="import-result" class="hint"></div>
     </section>
 
     <section id="focus-section" hidden>
@@ -225,7 +249,10 @@
     </section>
   </div>
 
-  <div id="graph"></div>
+  <div id="main">
+    <div id="tabs"></div>
+    <div id="graph"></div>
+  </div>
   <div id="status"></div>
 
   <script type="module" src="main.js"></script>

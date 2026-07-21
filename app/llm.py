@@ -1,9 +1,14 @@
-"""The generative model's two translation jobs (and nothing more):
+"""The generative model's three translation jobs (and nothing more):
 
 1. Plain English -> tidy record: the user's sentence about how two concepts
    relate becomes (source, target, predicate, directed).
 2. Tidy records -> plain English: word a suggested relationship, or summarise
    the facets of a multi-path connection.
+3. Document -> tidy records: distill an imported text into its most central
+   concepts and the relations between them (see app/ingest.py for the
+   surrounding pipeline). This is the one place the model chooses *content*
+   — deciding what in a document matters is inherently a language job — but
+   the records it emits are still cleaned up deterministically afterwards.
 
 All reasoning decisions are made elsewhere by math on embeddings; this module
 only translates. It talks to one of two providers, both through the
@@ -183,6 +188,59 @@ class SuggestedRelation(ParsedRelation):
     )
 
 
+class ExtractedConcept(BaseModel):
+    """One concept distilled from an imported document."""
+
+    name: str = Field(
+        description=(
+            "The concept's name, short and canonical, e.g. 'eigenvalues' — "
+            "not a sentence or a section title."
+        )
+    )
+    description: str = Field(
+        description=(
+            "One short sentence defining the concept as the document uses it."
+        )
+    )
+
+
+class ExtractedRelation(BaseModel):
+    """One relationship between two extracted concepts."""
+
+    source: str = Field(description="Name of the concept the relationship starts from")
+    target: str = Field(description="Name of the concept it points to")
+    predicate: str = Field(
+        description=(
+            "A specific, informative relationship phrase saying HOW the "
+            "concepts relate according to the document — the mechanism, "
+            "intuition, or dependency. Descriptive multi-word phrasing is "
+            "encouraged; avoid generic labels like 'is related to'. It must "
+            "read naturally as: source <predicate> target."
+        )
+    )
+    directed: bool = Field(
+        description=(
+            "True if the relationship is asymmetric (reads differently each "
+            "way, like 'is a prerequisite for'); False if symmetric (holds "
+            "both ways, like 'is analogous to')."
+        )
+    )
+
+
+class ExtractedGraph(BaseModel):
+    """A document distilled into concepts and the relations between them."""
+
+    concepts: list[ExtractedConcept] = Field(
+        description="The most important concepts in the document"
+    )
+    relations: list[ExtractedRelation] = Field(
+        description=(
+            "Relationships between the extracted concepts. Source and target "
+            "must each exactly match the name of a concept in `concepts`."
+        )
+    )
+
+
 class ConnectionSummary(BaseModel):
     """Plain-English wording of a path analysis, one sentence per facet."""
 
@@ -339,6 +397,43 @@ def summarise_connection(analysis: PathAnalysis) -> ConnectionSummary:
                 ),
             },
             {"role": "user", "content": body},
+        ],
+    )
+
+
+def extract_graph(text: str, min_concepts: int = 20, max_concepts: int = 40) -> ExtractedGraph:
+    """Distill a document into its most central concepts and the relations
+    between them. The caller (app/ingest.py) clips the text to fit the model
+    and cleans the returned records deterministically."""
+    global _current_job
+    _current_job = "extract_graph"
+    return _client().chat.completions.create(
+        model=MODEL,
+        max_retries=_MAX_RETRIES,
+        max_tokens=8192,
+        response_model=ExtractedGraph,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You distill a document into a knowledge graph for a STEM "
+                    f"learner. Extract the {min_concepts}-{max_concepts} most "
+                    "important concepts (fewer only if the text is short), "
+                    "each with a one-sentence definition as the document uses "
+                    "it. Then give the relationships between those concepts "
+                    "that the document states or clearly implies. Each "
+                    "relation's source and target must exactly match one of "
+                    "your concept names. Predicates are free text: be "
+                    "specific about HOW the concepts relate — the mechanism, "
+                    "intuition, or dependency — not just THAT they relate. "
+                    "Mark a relation directed=true when it is asymmetric "
+                    "(like a prerequisite), false when it holds both ways "
+                    "(like an analogy). Prefer a well-connected graph: most "
+                    "concepts should take part in at least one relation."
+                    + _NUDGE
+                ),
+            },
+            {"role": "user", "content": text},
         ],
     )
 

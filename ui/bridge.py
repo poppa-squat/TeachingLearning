@@ -5,10 +5,14 @@ page, returning a promise. pywebview runs each call on its own thread, so slow
 work (LLM calls, UMAP) doesn't freeze the window — but we serialise access to
 the graph with a lock.
 
-Data policy: every mutation is written straight to graph.json (crash safety);
-timestamped snapshots are only taken on explicit save, on restore, and when
-the window closes. That keeps history meaningful rather than one entry per
-click.
+Data policy: every mutation is written straight to the active map's graph.json
+(crash safety); timestamped snapshots are only taken on explicit save, on
+restore, when a document import creates a map, and when the window closes.
+That keeps history meaningful rather than one entry per click.
+
+Only the active map is held in memory; switching tabs saves it and loads the
+other. All graph access is serialised by the lock, so a slow import can't
+interleave with clicks on the current map.
 """
 
 from __future__ import annotations
@@ -16,11 +20,14 @@ from __future__ import annotations
 import logging
 import threading
 
-from app import llm, predict, reason, storage, views
+from pathlib import Path
+
+from app import ingest, llm, predict, reason, storage, views
 from app.embeddings import EmbeddingStore
 from app.graph import Edge, KnowledgeGraph
 from app.layout import meaning_positions
 from app.reason import PathAnalysis, path_text
+from app.workspace import Workspace
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +35,9 @@ log = logging.getLogger(__name__)
 class Api:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._kg: KnowledgeGraph = storage.load()
+        self._ws = Workspace()
+        self._map_id = self._ws.active_id()
+        self._kg: KnowledgeGraph = self._ws.load(self._map_id)
         self._store = EmbeddingStore()
         self._llm_available: bool | None = None
         # Warm the embedding model and Ollama check off the startup path.
@@ -44,6 +53,8 @@ class Api:
                 "edges": [e.model_dump() for e in self._kg.edges()],
                 "llm_available": self._llm_available,
                 "model": llm.MODEL,
+                "maps": [m.model_dump() for m in self._ws.maps()],
+                "active_map": self._map_id,
             }
 
     def log_js_error(self, message: str) -> None:
@@ -218,20 +229,108 @@ class Api:
         positions = meaning_positions(names, self._store, texts)
         return {name: list(pos) for name, pos in positions.items()}
 
+    # -- maps (tabs) -------------------------------------------------------------
+
+    def switch_map(self, map_id: str) -> dict:
+        with self._lock:
+            if map_id != self._map_id:
+                self._ws.save(self._kg, self._map_id, snapshot=False)
+                self._ws.set_active(map_id)
+                self._map_id = map_id
+                self._kg = self._ws.load(map_id)
+            return self.get_state()
+
+    def new_map(self, title: str = "") -> dict:
+        with self._lock:
+            self._ws.save(self._kg, self._map_id, snapshot=False)
+            info = self._ws.create(title)
+            self._map_id = info.id
+            self._kg = KnowledgeGraph()
+            self._autosave()
+            return self.get_state()
+
+    def rename_map(self, map_id: str, title: str) -> dict:
+        with self._lock:
+            self._ws.rename(map_id, title)
+            return self.get_state()
+
+    def close_map(self, map_id: str) -> dict:
+        """Delete a map (its folder is kept in maps/.trash on disk). The
+        workspace guarantees at least one map remains."""
+        with self._lock:
+            self._ws.delete(map_id)
+            self._map_id = self._ws.active_id()
+            self._kg = self._ws.load(self._map_id)
+            return self.get_state()
+
+    # -- importing a document ----------------------------------------------------
+
+    def import_document(self) -> dict:
+        """Pick a PDF/text file, distill it with the model, and open the
+        resulting graph in a new tab. Returns {"cancelled": True} if the user
+        dismissed the file dialog."""
+        import webview
+
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN,
+            allow_multiple=False,
+            file_types=("Documents (*.pdf;*.txt;*.md)", "All files (*.*)"),
+        )
+        if not picked:
+            return {"cancelled": True}
+        path = Path(picked[0])
+        return self._import(ingest.extract_text(path), title=path.stem)
+
+    def import_text(self, text: str, title: str = "") -> dict:
+        """Distill pasted text into a graph in a new tab."""
+        if not text.strip():
+            raise ValueError("Paste some text first")
+        return self._import(text.strip(), title=title.strip() or "Imported text")
+
+    def _import(self, text: str, title: str) -> dict:
+        if not self._llm_available:
+            raise RuntimeError(
+                "Importing needs the AI model, which isn't available right now"
+            )
+        clipped, truncated = ingest.clip(text, llm.PROVIDER)
+        kg = ingest.build_graph(llm.extract_graph(clipped))
+        with self._lock:
+            self._ws.save(self._kg, self._map_id, snapshot=False)
+            info = self._ws.create(title)
+            self._map_id = info.id
+            self._kg = kg
+            self._ws.save(kg, self._map_id)  # first snapshot of the new map
+            state = self.get_state()
+        # Warm the new texts into the embedding cache in the background so
+        # suggestions/layout are snappy on the fresh map.
+        threading.Thread(target=self._warm_embeddings, daemon=True).start()
+        return state | {
+            "report": {
+                "concepts": len(kg.node_names()),
+                "relations": len(kg.edges()),
+                "truncated": truncated,
+            }
+        }
+
     # -- snapshots -----------------------------------------------------------------
 
     def save_snapshot(self) -> dict:
         with self._lock:
-            snap = storage.save(self._kg)
-        return {"snapshot": snap.stem if snap else None,
-                "snapshots": storage.list_snapshots()}
+            snap = self._ws.save(self._kg, self._map_id)
+            return {"snapshot": snap.stem if snap else None,
+                    "snapshots": self.list_snapshots()}
 
     def list_snapshots(self) -> list[str]:
-        return storage.list_snapshots()
+        with self._lock:
+            return storage.list_snapshots(self._ws.snapshot_dir(self._map_id))
 
     def restore_snapshot(self, name: str) -> dict:
         with self._lock:
-            self._kg = storage.restore(name)
+            self._kg = storage.restore(
+                name,
+                self._ws.graph_file(self._map_id),
+                self._ws.snapshot_dir(self._map_id),
+            )
             return self.get_state()
 
     # -- lifecycle --------------------------------------------------------------
@@ -239,12 +338,12 @@ class Api:
     def on_closing(self) -> None:
         """Final snapshot when the window closes."""
         with self._lock:
-            storage.save(self._kg)
+            self._ws.save(self._kg, self._map_id)
 
     # -- internal ---------------------------------------------------------------
 
     def _autosave(self) -> None:
-        storage.save(self._kg, snapshot=False)
+        self._ws.save(self._kg, self._map_id, snapshot=False)
 
     def _warm_up(self) -> None:
         self._llm_available = llm.is_available()
@@ -253,6 +352,9 @@ class Api:
                 "Ollama/%s not reachable — relationship sentences will be "
                 "stored verbatim until it is.", llm.MODEL,
             )
+        self._warm_embeddings()
+
+    def _warm_embeddings(self) -> None:
         try:
             with self._lock:
                 node_texts = [self._kg.node_text(n) for n in self._kg.node_names()]

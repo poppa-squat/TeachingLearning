@@ -16,6 +16,9 @@ The user builds the map themselves:
 - They add a node by naming a concept.
 - They connect two nodes by selecting them and **typing, in plain English, how
   they relate**. They are not forced to pick from a menu of relationship types.
+- Or they can **import a document** (a PDF or plain text): the AI model
+  distills it into its most central concepts and connections, which open as a
+  new map. Several maps can be open at once, as **tabs**.
 
 The app then helps them see connections they didn't draw themselves — including
 suggesting how two *unconnected* concepts might relate — and lets them see the
@@ -78,11 +81,23 @@ Short glossary so nothing here is mysterious:
    alone (embedding closeness to the members' centroid + shared neighbours);
    there is no wording to generate, so the AI model plays no part here.
 
+8. **Importing a document** — the user gives a PDF or plain-text file (or
+   pastes text). Its text is extracted (pypdf; text-based PDFs only, no OCR),
+   clipped to fit the model's context, and handed to the AI model, which
+   distills it into tidy records: the ~20–40 most central concepts (each with
+   a one-line definition) and the relations between them, with free-text
+   predicates. Those records are then cleaned up **deterministically** (dedupe,
+   case-insensitive endpoint matching, drop anything unresolvable) and become a
+   brand-new map in its own tab — the user's existing maps are never touched.
+
 **Core principle — geometry decides, the model verbalises:** all the
 *decisions* about what relates to what are made by math on the embeddings (plain,
 fast, repeatable). The generative AI model is only used to turn plain English
 *into* tidy records, and tidy records back *into* plain English. It never makes
-the reasoning decisions. Keep it that way.
+the reasoning decisions. Keep it that way. (Document import, step 8, is the one
+deliberate exception on the *content* side: choosing what in a document matters
+is inherently a language job. Even there the model only emits tidy records —
+everything downstream of them stays math.)
 
 ---
 
@@ -112,13 +127,25 @@ the fallback when the network isn't available.
   shape we need. Pydantic defines the shape; Instructor makes the model obey it
   and retries if it doesn't. (See §6 for the shape.)
 
-**Saving (persistence + history):** the graph is saved as a plain JSON file. On
+**Saving (persistence + history):** each graph is saved as a plain JSON file. On
 top of that, the app keeps a **history of past versions** so a user can roll back
 to an earlier state of their map. Because the graph is small, the simple, correct
 approach is to save a **full snapshot** on each save (a numbered/dated copy) and
 let the user pick an old snapshot to restore — no clever change-tracking needed.
 This exists for a specific reason: users should feel free to experiment without
 fear of wrecking their map.
+
+**Several maps (tabs):** the user can keep multiple maps open as tabs
+(`app/workspace.py`). Each map is a self-contained folder in the per-user data
+dir — `maps/<id>/graph.json` + `maps/<id>/snapshots/` — and `workspace.json`
+lists the tabs and the active one. Only the active map is held in memory; the
+snapshot history is per map. Closing a tab moves the map's folder to
+`maps/.trash/` rather than erasing it. A legacy single `graph.json` from before
+tabs existed is migrated into the first tab on startup.
+
+**Document import:** `pypdf` extracts the text layer from PDFs (no OCR — a
+scanned PDF is rejected with a clear message); plain text/markdown is read
+directly. `app/ingest.py` owns the file-to-graph pipeline described in §3.
 
 **Similarity math:** plain NumPy. At this graph size, comparing every pair
 directly is instant — we deliberately do **not** need heavyweight
@@ -227,7 +254,11 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
   pyproject.toml      Python dependencies (managed with uv)
   /app
     graph.py          NetworkX graph in memory + the Node/Edge models (§6)
-    storage.py        save/load JSON + snapshot history (roll back to old versions)
+    storage.py        save/load one graph's JSON + snapshot history
+    workspace.py      the tabs: several maps, each its own folder (maps/<id>/),
+                      workspace.json for the tab list, legacy migration
+    ingest.py         document import: PDF/text extraction, context clipping,
+                      tidy records -> KnowledgeGraph (deterministic cleanup)
     embeddings.py     make + cache embeddings (sentence-transformers)
     llm.py            model calls (DeepSeek, or the Ollama fallback), wrapped
                       with Instructor/Pydantic; writes the cost log
@@ -242,11 +273,18 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
     /vendor           committed JS bundle (3d-force-graph + three) so the UI
                       needs no internet at runtime
   /tests              pytest unit tests for the /app core (embeddings stubbed)
-  /snapshots          saved graph versions (created at runtime, not committed)
-  graph.json          the user's map (created at runtime, not committed)
-  llm_costs.log       accrued DeepSeek spend, one line per API call (created
-                      at runtime, not committed)
   main.py             starts the app window
+```
+
+Runtime files (never committed) live in the per-user data directory resolved
+by `app/paths.py` (e.g. `~/.local/share/TeachingLearning` on Linux):
+
+```
+  workspace.json      the tab list + which map is active
+  /maps/<id>/         one folder per map: graph.json + snapshots/
+  /maps/.trash/       closed maps, kept recoverable
+  embeddings_cache.npz  the embedding cache
+  llm_costs.log       accrued DeepSeek spend, one line per API call
 ```
 
 ---
@@ -254,9 +292,18 @@ requirements.txt. Run the app with `uv run main.py`; tests with `uv run pytest`.
 ## 8. Decisions made, and what's still open
 
 **Settled:**
-- **Persistence:** single JSON save file, plus full-snapshot version history so
-  users can roll back (§4). Embedded databases (Kùzu, LanceDB) are a possible
-  future upgrade, not needed now.
+- **Persistence:** one JSON save file per map, plus full-snapshot version
+  history so users can roll back (§4). Embedded databases (Kùzu, LanceDB) are a
+  possible future upgrade, not needed now.
+- **Tabs (July 2026):** several maps can be open at once; each is a
+  self-contained folder and the workspace file tracks the tab list (§4).
+  Importing a document always lands in a new tab, never in an existing map.
+- **Document import (July 2026):** PDF (text layer only, via pypdf) or plain
+  text, distilled by the generative model into ~20–40 concepts + relations in
+  one structured call (§3 step 8), then cleaned deterministically in
+  `app/ingest.py`. Import requires a model (DeepSeek or Ollama); with no model
+  the feature is off — it *is* an AI-assisted feature, so this respects the
+  graceful-degradation rule.
 - **Desktop window:** pywebview window + 3d-force-graph for 3D drawing (§4).
 - **Direction:** keep the `directed` flag; it marks symmetric vs asymmetric only
   (§6).

@@ -69,17 +69,26 @@ uv run main.py
 
 - **Add concepts** in the side panel; click two nodes to select them, then
   describe how they relate in plain English.
+- **Import a document**: pick a PDF or text file (or paste text) and the AI
+  model distills it into its key concepts and connections, opened as a new
+  map. Text-based PDFs only — scanned pages have no text to read.
+- **Tabs**: keep several maps open at once; `+` starts an empty one,
+  double-click a tab to rename it.
 - **Layout toggle**: arrange nodes by hand (positions are saved), or let
   meaning decide — similar concepts cluster together.
 - **Suggestions / Explain / Linchpins**: see connections you didn't draw.
 - **History**: save a snapshot any time; roll back fearlessly (rolling back
   itself snapshots your current map first).
 
-Your map and its history live in a per-user data directory, not the project
+Your maps and their history live in a per-user data directory, not the project
 folder — `~/.local/share/TeachingLearning` on Linux, `~/Library/Application
 Support/TeachingLearning` on macOS, `%LOCALAPPDATA%\TeachingLearning` on
-Windows (`graph.json`, `snapshots/`, plus the embedding cache and cost log).
-Set `TEACHINGLEARNING_DATA_DIR` to point it elsewhere.
+Windows. Each map is a folder under `maps/` holding its `graph.json` and
+`snapshots/`; `workspace.json` lists the open tabs, and closed maps are kept
+in `maps/.trash/`. The embedding cache and cost log live alongside. Set
+`TEACHINGLEARNING_DATA_DIR` to point it elsewhere. (An older single
+`graph.json` from a previous version is migrated into the first tab
+automatically.)
 
 ## Tests
 
