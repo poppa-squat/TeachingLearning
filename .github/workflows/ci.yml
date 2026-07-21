@@ -1,0 +1,48 @@
+# Runs the unit tests on every push to main and every pull request.
+#
+# The suite (tests/) is designed to run headless: embeddings are stubbed and
+# no model server is needed. The heavyweight deps (torch via
+# sentence-transformers) still install, so the first run is slow; uv's cache
+# makes later runs fast. PyGObject needs the GTK introspection headers on
+# Linux — same apt packages the README lists for local setup.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries for PyGObject
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgirepository1.0-dev libgirepository-2.0-dev python3-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: JS syntax check
+        # main.js is an ES module; node --check needs the .mjs suffix to
+        # parse it as one.
+        run: |
+          cp ui/main.js "$RUNNER_TEMP/main.mjs"
+          node --check "$RUNNER_TEMP/main.mjs"
